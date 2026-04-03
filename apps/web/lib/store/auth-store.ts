@@ -1,16 +1,28 @@
-// Auth is handled entirely by Clerk.
-// Use these Clerk hooks directly in components:
-//
-//   import { useUser, useAuth } from '@clerk/nextjs'
-//   const { user, isLoaded, isSignedIn } = useUser()
-//   const { userId, getToken } = useAuth()
-//
-// For server components and API routes:
-//   import { auth, currentUser } from '@clerk/nextjs/server'
-//   const { userId } = await auth()
-//   const user = await currentUser()
-//
-// CRM role stored in Clerk publicMetadata: { role: 'admin' | 'manager' | 'agent' }
-// Set via Clerk Dashboard or Clerk Backend API after first signup.
+import { create } from 'zustand'
+import { persist } from 'zustand/middleware'
 
-export {}
+export type CRMRole = 'admin' | 'manager' | 'agent'
+
+export interface AuthUser {
+  id: string
+  email: string
+  name: string
+  role: CRMRole
+}
+
+interface AuthState {
+  user: AuthUser | null
+  setUser: (user: AuthUser) => void
+  clearUser: () => void
+}
+
+export const useAuthStore = create<AuthState>()(
+  persist(
+    (set) => ({
+      user: null,
+      setUser: (user) => set({ user }),
+      clearUser: () => set({ user: null }),
+    }),
+    { name: 'crm-auth' }
+  )
+)

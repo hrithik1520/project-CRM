@@ -15,7 +15,7 @@
 | Backend | Next.js API Routes + Express microservice for WhatsApp engine | API routes for most CRM logic; WhatsApp session engine isolated as separate Node process |
 | Database | PostgreSQL 15 | Relational, battle-tested, JSONB for flexible fields, full-text search built-in |
 | ORM | Prisma | Type-safe, migration-friendly, excellent DX |
-| Auth | **Clerk** (`@clerk/nextjs`) | Hosted auth with built-in UI, MFA, social login, session management. CRM roles stored in `publicMetadata`. No custom password/JWT code needed. |
+| Auth | NextAuth.js v5 (Credentials provider) | Self-hosted, no external dependency. Email + bcrypt password. Roles via JWT claims. |
 | Realtime | Socket.IO | Mature, fallback-friendly, works well with Node |
 | Queue | BullMQ + Redis | Reliable job queues for message sending, automations, GA4 dispatch |
 | WhatsApp Engine | whatsapp-web.js | Most maintained unofficial library; runs as separate Express service |
@@ -250,27 +250,27 @@ SessionManager
 
 ## 9. Auth and Permissions
 
-**Auth:** [Clerk](https://clerk.com) via `@clerk/nextjs`.
+**Auth:** NextAuth.js v5 with Credentials provider (email + bcrypt password).
 
 **How it works:**
-- `clerkMiddleware()` in `middleware.ts` protects all routes automatically
-- `ClerkProvider` wraps the entire app in `layout.tsx`
-- Login/signup UI served by Clerk's hosted components (`<SignIn />`, `<SignUpButton />`)
-- User avatar/profile/sign-out handled by Clerk's `<UserButton />`
-- After first signup: admin sets CRM role via Clerk Dashboard → `publicMetadata: { role: 'admin' | 'manager' | 'agent' }`
+- `auth()` middleware in `middleware.ts` protects all `/(dashboard)` routes
+- `SessionProvider` wraps the app in `providers.tsx`
+- Custom login page at `/login` with email + password form
+- JWT stored in httpOnly cookie. JWT includes: `id`, `email`, `name`, `role`
+- Roles stored in the `users` table (`admin` | `manager` | `agent`)
+- Config at `apps/web/lib/auth/config.ts`
 
 **CRM role access in code:**
 ```typescript
 // Client components
-import { useUser } from '@clerk/nextjs'
-const { user } = useUser()
-const role = user?.publicMetadata?.role as CRMRole
+import { useSession } from 'next-auth/react'
+const { data: session } = useSession()
+const role = (session?.user as any)?.role as CRMRole
 
 // Server components / API routes
-import { auth, currentUser } from '@clerk/nextjs/server'
-const { userId } = await auth()
-const user = await currentUser()
-const role = user?.publicMetadata?.role as CRMRole
+import { auth } from '@/lib/auth/config'
+const session = await auth()
+const role = (session?.user as any)?.role as CRMRole
 ```
 
 **Permission checks:**
