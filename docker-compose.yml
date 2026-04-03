@@ -1,0 +1,107 @@
+version: '3.9'
+
+# ─────────────────────────────────────────────
+# CRM — Docker Compose
+# Start: docker-compose up -d
+# Stop:  docker-compose down
+# Logs:  docker-compose logs -f
+# ─────────────────────────────────────────────
+
+services:
+
+  # ── Next.js CRM web app ────────────────────
+  web:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.web
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - NODE_ENV=production
+      - REDIS_URL=redis://redis:6379
+      - WHATSAPP_ENGINE_URL=http://whatsapp:3001
+    ports:
+      - "3000:3000"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - crm-network
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # ── WhatsApp session engine ────────────────
+  whatsapp:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.whatsapp
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - NODE_ENV=production
+      - REDIS_URL=redis://redis:6379
+      - WEB_APP_URL=http://web:3000
+      - SESSIONS_DIR=/app/whatsapp-sessions
+    volumes:
+      - whatsapp-sessions:/app/whatsapp-sessions
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - crm-network
+    # Limit memory to avoid OOM from Chromium instances
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # ── Redis (BullMQ queues) ──────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis-data:/data
+    networks:
+      - crm-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Caddy reverse proxy ────────────────────
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - web
+    networks:
+      - crm-network
+
+volumes:
+  redis-data:
+  whatsapp-sessions:
+  caddy-data:
+  caddy-config:
+
+networks:
+  crm-network:
+    driver: bridge

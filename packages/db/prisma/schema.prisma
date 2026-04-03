@@ -1,0 +1,674 @@
+// Prisma schema for CRM
+// Database: Supabase PostgreSQL
+// Generated: 2026-04-02
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ─────────────────────────────────────────────
+// AUTH & USERS
+// ─────────────────────────────────────────────
+
+enum Role {
+  admin
+  manager
+  agent
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  name         String
+  passwordHash String   @map("password_hash")
+  role         Role     @default(agent)
+  avatarUrl    String?  @map("avatar_url")
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  assignedLeads      Lead[]         @relation("AssignedLeads")
+  createdLeads       Lead[]         @relation("CreatedLeads")
+  createdContacts    Contact[]      @relation("CreatedContacts")
+  notes              Note[]
+  reminders          Reminder[]     @relation("ReminderCreator")
+  assignedReminders  Reminder[]     @relation("ReminderAssignee")
+  tasks              Task[]         @relation("TaskCreator")
+  assignedTasks      Task[]         @relation("TaskAssignee")
+  createdOrders      Order[]
+  auditLogs          AuditLog[]
+  notifications      Notification[]
+  createdTemplates   MessageTemplate[]
+  createdAutomations Automation[]
+  createdPipelines   Pipeline[]
+
+  @@map("users")
+}
+
+// ─────────────────────────────────────────────
+// PIPELINES & STAGES
+// ─────────────────────────────────────────────
+
+model Pipeline {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  isDefault   Boolean  @default(false) @map("is_default")
+  position    Int      @default(0)
+  createdById String   @map("created_by_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  createdBy   User         @relation(fields: [createdById], references: [id])
+  stages      LeadStage[]
+  leads       Lead[]
+  automations Automation[]
+
+  @@map("pipelines")
+}
+
+model LeadStage {
+  id         String   @id @default(uuid())
+  pipelineId String   @map("pipeline_id")
+  name       String
+  position   Int      @default(0)
+  color      String   @default("#6B7280")
+  isWon      Boolean  @default(false) @map("is_won")
+  isLost     Boolean  @default(false) @map("is_lost")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  pipeline Pipeline @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
+  leads    Lead[]
+
+  @@map("lead_stages")
+}
+
+// ─────────────────────────────────────────────
+// WHATSAPP
+// ─────────────────────────────────────────────
+
+enum WhatsAppSessionStatus {
+  initializing
+  qr
+  connected
+  disconnected
+  requires_reauth
+  stopped
+}
+
+model WhatsAppAccount {
+  id          String   @id @default(uuid())
+  name        String
+  phoneNumber String?  @map("phone_number")
+  description String?
+  isActive    Boolean  @default(true) @map("is_active")
+  createdById String   @map("created_by_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  sessions      WhatsAppSession[]
+  conversations Conversation[]
+
+  @@map("whatsapp_accounts")
+}
+
+model WhatsAppSession {
+  id              String                @id @default(uuid())
+  accountId       String                @map("account_id")
+  status          WhatsAppSessionStatus @default(initializing)
+  qrCode          String?               @map("qr_code")
+  qrExpiresAt     DateTime?             @map("qr_expires_at")
+  lastConnectedAt DateTime?             @map("last_connected_at")
+  authPath        String?               @map("auth_path")
+  errorMessage    String?               @map("error_message")
+  createdAt       DateTime              @default(now()) @map("created_at")
+  updatedAt       DateTime              @updatedAt @map("updated_at")
+
+  account WhatsAppAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@map("whatsapp_sessions")
+}
+
+// ─────────────────────────────────────────────
+// CONTACTS
+// ─────────────────────────────────────────────
+
+model Contact {
+  id          String   @id @default(uuid())
+  name        String
+  phone       String   @unique
+  email       String?
+  company     String?
+  source      String?
+  notes       String?
+  // UTM attribution
+  utmSource   String?  @map("utm_source")
+  utmMedium   String?  @map("utm_medium")
+  utmCampaign String?  @map("utm_campaign")
+  utmTerm     String?  @map("utm_term")
+  utmContent  String?  @map("utm_content")
+  gclid       String?
+  ga4ClientId String?  @map("ga4_client_id")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdById String   @map("created_by_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  createdBy     User           @relation("CreatedContacts", fields: [createdById], references: [id])
+  leads         Lead[]
+  conversations Conversation[]
+  contactTags   ContactTag[]
+  orders        Order[]
+  notesList     Note[]         @relation("ContactNotes")
+
+  @@index([phone])
+  @@index([email])
+  @@index([createdAt])
+  @@map("contacts")
+}
+
+// ─────────────────────────────────────────────
+// LEADS
+// ─────────────────────────────────────────────
+
+enum LeadStatus {
+  active
+  won
+  lost
+  stale
+  archived
+}
+
+model Lead {
+  id          String     @id @default(uuid())
+  contactId   String     @map("contact_id")
+  pipelineId  String     @map("pipeline_id")
+  stageId     String     @map("stage_id")
+  assignedToId String?   @map("assigned_to_id")
+  createdById String     @map("created_by_id")
+  title       String
+  status      LeadStatus @default(active)
+  score       Int        @default(0)
+  source      String?
+  lostReason  String?    @map("lost_reason")
+  wonAt       DateTime?  @map("won_at")
+  lostAt      DateTime?  @map("lost_at")
+  stageMovedAt DateTime? @map("stage_moved_at")
+  lastMessageAt DateTime? @map("last_message_at")
+  lastFollowupAt DateTime? @map("last_followup_at")
+  createdAt   DateTime   @default(now()) @map("created_at")
+  updatedAt   DateTime   @updatedAt @map("updated_at")
+
+  contact    Contact       @relation(fields: [contactId], references: [id])
+  pipeline   Pipeline      @relation(fields: [pipelineId], references: [id])
+  stage      LeadStage     @relation(fields: [stageId], references: [id])
+  assignedTo User?         @relation("AssignedLeads", fields: [assignedToId], references: [id])
+  createdBy  User          @relation("CreatedLeads", fields: [createdById], references: [id])
+  notes      Note[]
+  reminders  Reminder[]
+  tasks      Task[]
+  orders     Order[]
+  activity   LeadActivity[]
+  leadTags   LeadTag[]
+  automationRuns AutomationRun[]
+
+  @@index([contactId])
+  @@index([pipelineId, stageId])
+  @@index([assignedToId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("leads")
+}
+
+// ─────────────────────────────────────────────
+// CONVERSATIONS & MESSAGES
+// ─────────────────────────────────────────────
+
+enum MessageDirection {
+  inbound
+  outbound
+}
+
+enum MessageStatus {
+  queued
+  sent
+  delivered
+  read
+  failed
+}
+
+enum MessageType {
+  text
+  image
+  document
+  audio
+  video
+  sticker
+  location
+  template
+}
+
+model Conversation {
+  id               String   @id @default(uuid())
+  contactId        String   @map("contact_id")
+  whatsappAccountId String  @map("whatsapp_account_id")
+  leadId           String?  @map("lead_id")
+  lastMessageAt    DateTime? @map("last_message_at")
+  lastMessageBody  String?  @map("last_message_body")
+  unreadCount      Int      @default(0) @map("unread_count")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  contact          Contact         @relation(fields: [contactId], references: [id])
+  whatsappAccount  WhatsAppAccount @relation(fields: [whatsappAccountId], references: [id])
+  messages         Message[]
+
+  @@unique([contactId, whatsappAccountId])
+  @@index([whatsappAccountId, lastMessageAt(sort: Desc)])
+  @@index([contactId])
+  @@map("conversations")
+}
+
+model Message {
+  id             String           @id @default(uuid())
+  conversationId String           @map("conversation_id")
+  direction      MessageDirection
+  body           String?
+  type           MessageType      @default(text)
+  status         MessageStatus    @default(queued)
+  waMessageId    String?          @unique @map("wa_message_id")
+  mediaUrl       String?          @map("media_url")
+  mediaType      String?          @map("media_type")
+  templateId     String?          @map("template_id")
+  sentAt         DateTime?        @map("sent_at")
+  deliveredAt    DateTime?        @map("delivered_at")
+  readAt         DateTime?        @map("read_at")
+  failureReason  String?          @map("failure_reason")
+  createdAt      DateTime         @default(now()) @map("created_at")
+
+  conversation Conversation     @relation(fields: [conversationId], references: [id])
+  template     MessageTemplate? @relation(fields: [templateId], references: [id])
+
+  @@index([conversationId, createdAt(sort: Desc)])
+  @@index([waMessageId])
+  @@index([status])
+  @@map("messages")
+}
+
+// ─────────────────────────────────────────────
+// TEMPLATES
+// ─────────────────────────────────────────────
+
+model MessageTemplate {
+  id          String   @id @default(uuid())
+  name        String
+  body        String
+  category    String   @default("general")
+  variables   Json     @default("[]")
+  shortcut    String?  @unique
+  isGlobal    Boolean  @default(true) @map("is_global")
+  createdById String   @map("created_by_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  createdBy User      @relation(fields: [createdById], references: [id])
+  messages  Message[]
+
+  @@map("message_templates")
+}
+
+// ─────────────────────────────────────────────
+// NOTES
+// ─────────────────────────────────────────────
+
+model Note {
+  id          String   @id @default(uuid())
+  leadId      String?  @map("lead_id")
+  contactId   String?  @map("contact_id")
+  body        String
+  createdById String   @map("created_by_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  lead      Lead?    @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  contact   Contact? @relation("ContactNotes", fields: [contactId], references: [id])
+  createdBy User     @relation(fields: [createdById], references: [id])
+
+  @@index([leadId])
+  @@index([contactId])
+  @@map("notes")
+}
+
+// ─────────────────────────────────────────────
+// REMINDERS & TASKS
+// ─────────────────────────────────────────────
+
+model Reminder {
+  id          String    @id @default(uuid())
+  leadId      String    @map("lead_id")
+  createdById String    @map("created_by_id")
+  assignedToId String   @map("assigned_to_id")
+  note        String
+  dueAt       DateTime  @map("due_at")
+  isDone      Boolean   @default(false) @map("is_done")
+  doneAt      DateTime? @map("done_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  lead       Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  createdBy  User @relation("ReminderCreator", fields: [createdById], references: [id])
+  assignedTo User @relation("ReminderAssignee", fields: [assignedToId], references: [id])
+
+  @@index([assignedToId, dueAt])
+  @@index([isDone, dueAt])
+  @@map("reminders")
+}
+
+enum TaskStatus {
+  todo
+  in_progress
+  done
+}
+
+enum TaskPriority {
+  low
+  medium
+  high
+}
+
+model Task {
+  id           String       @id @default(uuid())
+  leadId       String       @map("lead_id")
+  createdById  String       @map("created_by_id")
+  assignedToId String       @map("assigned_to_id")
+  title        String
+  description  String?
+  status       TaskStatus   @default(todo)
+  priority     TaskPriority @default(medium)
+  dueAt        DateTime?    @map("due_at")
+  doneAt       DateTime?    @map("done_at")
+  createdAt    DateTime     @default(now()) @map("created_at")
+  updatedAt    DateTime     @updatedAt @map("updated_at")
+
+  lead       Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  createdBy  User @relation("TaskCreator", fields: [createdById], references: [id])
+  assignedTo User @relation("TaskAssignee", fields: [assignedToId], references: [id])
+
+  @@index([assignedToId, dueAt])
+  @@index([leadId])
+  @@map("tasks")
+}
+
+// ─────────────────────────────────────────────
+// ORDERS & PAYMENTS
+// ─────────────────────────────────────────────
+
+enum OrderStatus {
+  draft
+  confirmed
+  processing
+  shipped
+  delivered
+  cancelled
+}
+
+enum PaymentStatus {
+  pending
+  partial
+  paid
+  refunded
+}
+
+model Order {
+  id          String      @id @default(uuid())
+  leadId      String      @map("lead_id")
+  contactId   String      @map("contact_id")
+  createdById String      @map("created_by_id")
+  orderNumber String      @unique @map("order_number")
+  status      OrderStatus @default(draft)
+  notes       String?
+  total       Decimal     @default(0) @db.Decimal(12, 2)
+  createdAt   DateTime    @default(now()) @map("created_at")
+  updatedAt   DateTime    @updatedAt @map("updated_at")
+
+  lead      Lead        @relation(fields: [leadId], references: [id])
+  contact   Contact     @relation(fields: [contactId], references: [id])
+  createdBy User        @relation(fields: [createdById], references: [id])
+  items     OrderItem[]
+  payments  Payment[]
+
+  @@index([leadId])
+  @@index([contactId])
+  @@map("orders")
+}
+
+model OrderItem {
+  id        String  @id @default(uuid())
+  orderId   String  @map("order_id")
+  name      String
+  quantity  Int     @default(1)
+  unitPrice Decimal @db.Decimal(12, 2) @map("unit_price")
+  total     Decimal @db.Decimal(12, 2)
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@map("order_items")
+}
+
+model Payment {
+  id          String        @id @default(uuid())
+  orderId     String        @map("order_id")
+  amount      Decimal       @db.Decimal(12, 2)
+  method      String?
+  status      PaymentStatus @default(pending)
+  reference   String?
+  notes       String?
+  paidAt      DateTime?     @map("paid_at")
+  createdAt   DateTime      @default(now()) @map("created_at")
+  updatedAt   DateTime      @updatedAt @map("updated_at")
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@map("payments")
+}
+
+// ─────────────────────────────────────────────
+// TAGS
+// ─────────────────────────────────────────────
+
+model Tag {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  color     String   @default("#6B7280")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  leadTags    LeadTag[]
+  contactTags ContactTag[]
+
+  @@map("tags")
+}
+
+model LeadTag {
+  leadId    String @map("lead_id")
+  tagId     String @map("tag_id")
+
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  tag  Tag  @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([leadId, tagId])
+  @@map("lead_tags")
+}
+
+model ContactTag {
+  contactId String @map("contact_id")
+  tagId     String @map("tag_id")
+
+  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  tag     Tag     @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([contactId, tagId])
+  @@map("contact_tags")
+}
+
+// ─────────────────────────────────────────────
+// LEAD ACTIVITY LOG
+// ─────────────────────────────────────────────
+
+model LeadActivity {
+  id          String   @id @default(uuid())
+  leadId      String   @map("lead_id")
+  userId      String?  @map("user_id")
+  type        String   // lead_created, stage_moved, message_sent, note_added, reminder_set, order_created, payment_updated, assigned, automation_triggered
+  description String
+  metadata    Json?    @default("{}")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@index([leadId, createdAt(sort: Desc)])
+  @@map("lead_activity")
+}
+
+// ─────────────────────────────────────────────
+// AUTOMATIONS
+// ─────────────────────────────────────────────
+
+model Automation {
+  id            String   @id @default(uuid())
+  name          String
+  description   String?
+  pipelineId    String?  @map("pipeline_id")
+  triggerType   String   @map("trigger_type")
+  triggerConfig Json     @default("{}") @map("trigger_config")
+  conditions    Json     @default("[]")
+  actionType    String   @map("action_type")
+  actionConfig  Json     @default("{}") @map("action_config")
+  isActive      Boolean  @default(true) @map("is_active")
+  createdById   String   @map("created_by_id")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  pipeline   Pipeline?       @relation(fields: [pipelineId], references: [id])
+  createdBy  User            @relation(fields: [createdById], references: [id])
+  runs       AutomationRun[]
+
+  @@map("automations")
+}
+
+enum AutomationRunStatus {
+  pending
+  running
+  success
+  failed
+  skipped
+}
+
+model AutomationRun {
+  id           String              @id @default(uuid())
+  automationId String              @map("automation_id")
+  leadId       String?             @map("lead_id")
+  status       AutomationRunStatus @default(pending)
+  error        String?
+  executedAt   DateTime            @default(now()) @map("executed_at")
+
+  automation Automation @relation(fields: [automationId], references: [id])
+  lead       Lead?      @relation(fields: [leadId], references: [id])
+
+  @@index([automationId, executedAt(sort: Desc)])
+  @@map("automation_runs")
+}
+
+// ─────────────────────────────────────────────
+// NOTIFICATIONS
+// ─────────────────────────────────────────────
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  type      String
+  title     String
+  body      String?
+  leadId    String?  @map("lead_id")
+  isRead    Boolean  @default(false) @map("is_read")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, isRead, createdAt(sort: Desc)])
+  @@map("notifications")
+}
+
+// ─────────────────────────────────────────────
+// AUDIT LOGS
+// ─────────────────────────────────────────────
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  userId     String?  @map("user_id")
+  action     String
+  entityType String   @map("entity_type")
+  entityId   String   @map("entity_id")
+  before     Json?
+  after      Json?
+  ip         String?
+  userAgent  String?  @map("user_agent")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([entityType, entityId])
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([createdAt(sort: Desc)])
+  @@map("audit_logs")
+}
+
+// ─────────────────────────────────────────────
+// WEBHOOKS (inbound lead capture)
+// ─────────────────────────────────────────────
+
+model Webhook {
+  id         String   @id @default(uuid())
+  name       String
+  secret     String
+  isActive   Boolean  @default(true) @map("is_active")
+  totalHits  Int      @default(0) @map("total_hits")
+  lastHitAt  DateTime? @map("last_hit_at")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@map("webhooks")
+}
+
+// ─────────────────────────────────────────────
+// GA4 EVENT QUEUE
+// ─────────────────────────────────────────────
+
+enum GA4EventStatus {
+  pending
+  sent
+  failed
+}
+
+model GA4EventQueue {
+  id          String         @id @default(uuid())
+  eventName   String         @map("event_name")
+  parameters  Json           @default("{}")
+  clientId    String?        @map("client_id")
+  status      GA4EventStatus @default(pending)
+  attempts    Int            @default(0)
+  sentAt      DateTime?      @map("sent_at")
+  error       String?
+  createdAt   DateTime       @default(now()) @map("created_at")
+
+  @@index([status, createdAt])
+  @@map("ga4_event_queue")
+}

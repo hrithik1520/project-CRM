@@ -1,0 +1,30 @@
+node_modules
+.env
+.env.local
+.env.*.local
+.next
+dist
+build
+.turbo
+
+# WhatsApp session auth files
+apps/whatsapp/.wwebjs_auth/
+apps/whatsapp/whatsapp-sessions/
+
+# Uploads
+uploads/
+
+# DB
+*.db
+*.sqlite
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Backups
+backups/
