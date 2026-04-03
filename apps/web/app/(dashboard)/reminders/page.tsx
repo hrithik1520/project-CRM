@@ -1,14 +1,199 @@
 'use client'
 
 import { useState } from 'react'
-import { Bell, CheckSquare, Clock, CheckCircle2, Plus, AlertCircle } from 'lucide-react'
+import { Bell, CheckSquare, Clock, CheckCircle2, Plus, AlertCircle, X } from 'lucide-react'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useReminders, useTasks, useMarkReminderDone, useUpdateTaskStatus } from '@/lib/hooks/use-reminders'
+import { api } from '@/lib/api/client'
 import { cn } from '@/lib/utils'
+
+// ── Shared lead search hook ──────────────────────────────────────────────────
+function useLeadSearch(q: string) {
+  return useQuery<any>({
+    queryKey: ['lead-search', q],
+    queryFn: () => api.get(`/api/leads?search=${encodeURIComponent(q)}&pageSize=5`),
+    enabled: q.length >= 2,
+  })
+}
+
+// ── Add Reminder Modal ───────────────────────────────────────────────────────
+function AddReminderModal({ onClose }: { onClose: () => void }) {
+  const qc = useQueryClient()
+  const [title, setTitle] = useState('')
+  const [dueAt, setDueAt] = useState('')
+  const [leadSearch, setLeadSearch] = useState('')
+  const [selectedLead, setSelectedLead] = useState<any>(null)
+  const { data: leadResults } = useLeadSearch(leadSearch)
+  const { data: users = [] } = useQuery<any[]>({ queryKey: ['users'], queryFn: () => api.get('/api/users') })
+  const [assignedToId, setAssignedToId] = useState('')
+
+  const create = useMutation({
+    mutationFn: () => api.post('/api/reminders', {
+      leadId: selectedLead.id,
+      title: title.trim(),
+      dueAt: new Date(dueAt).toISOString(),
+      ...(assignedToId && { assignedToId }),
+    }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['reminders'] }); onClose() },
+  })
+
+  return (
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl w-full max-w-sm shadow-xl">
+        <div className="flex items-center justify-between p-5 border-b border-gray-200">
+          <h2 className="text-base font-semibold text-gray-900">Add Reminder</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-700"><X className="w-5 h-5" /></button>
+        </div>
+        <div className="p-5 space-y-3">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Title *</label>
+            <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Follow up call" className="w-full h-10 px-3 rounded-lg border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Due Date & Time *</label>
+            <input type="datetime-local" value={dueAt} onChange={(e) => setDueAt(e.target.value)} className="w-full h-10 px-3 rounded-lg border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Lead *</label>
+            {selectedLead ? (
+              <div className="flex items-center justify-between h-10 px-3 rounded-lg border border-green-300 bg-green-50 text-sm">
+                <span className="font-medium text-green-800">{selectedLead.title}</span>
+                <button onClick={() => { setSelectedLead(null); setLeadSearch('') }} className="text-green-600"><X className="w-3.5 h-3.5" /></button>
+              </div>
+            ) : (
+              <div className="relative">
+                <input value={leadSearch} onChange={(e) => setLeadSearch(e.target.value)} placeholder="Search lead…" className="w-full h-10 px-3 rounded-lg border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20" />
+                {leadResults?.data?.length > 0 && (
+                  <div className="absolute top-full mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg z-10 overflow-hidden">
+                    {leadResults.data.slice(0, 4).map((l: any) => (
+                      <button key={l.id} onClick={() => { setSelectedLead(l); setLeadSearch('') }} className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50">{l.title}</button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Assign To</label>
+            <select value={assignedToId} onChange={(e) => setAssignedToId(e.target.value)} className="w-full h-10 px-3 rounded-lg border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20">
+              <option value="">Me</option>
+              {users.map((u: any) => <option key={u.id} value={u.id}>{u.name}</option>)}
+            </select>
+          </div>
+        </div>
+        <div className="flex justify-end gap-2 p-5 border-t border-gray-200">
+          <button onClick={onClose} className="px-4 py-2 text-sm border border-gray-200 rounded-lg hover:bg-gray-50">Cancel</button>
+          <button
+            onClick={() => create.mutate()}
+            disabled={create.isPending || !title.trim() || !dueAt || !selectedLead}
+            className="px-4 py-2 text-sm text-white bg-primary rounded-lg hover:bg-primary/90 disabled:opacity-50"
+          >
+            {create.isPending ? 'Saving…' : 'Add Reminder'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Add Task Modal ────────────────────────────────────────────────────────────
+function AddTaskModal({ onClose }: { onClose: () => void }) {
+  const qc = useQueryClient()
+  const [title, setTitle] = useState('')
+  const [dueAt, setDueAt] = useState('')
+  const [priority, setPriority] = useState('medium')
+  const [leadSearch, setLeadSearch] = useState('')
+  const [selectedLead, setSelectedLead] = useState<any>(null)
+  const { data: leadResults } = useLeadSearch(leadSearch)
+  const { data: users = [] } = useQuery<any[]>({ queryKey: ['users'], queryFn: () => api.get('/api/users') })
+  const [assignedToId, setAssignedToId] = useState('')
+
+  const create = useMutation({
+    mutationFn: () => api.post('/api/tasks', {
+      leadId: selectedLead.id,
+      title: title.trim(),
+      priority,
+      ...(dueAt && { dueAt: new Date(dueAt).toISOString() }),
+      ...(assignedToId && { assignedToId }),
+    }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['tasks'] }); onClose() },
+  })
+
+  return (
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl w-full max-w-sm shadow-xl">
+        <div className="flex items-center justify-between p-5 border-b border-gray-200">
+          <h2 className="text-base font-semibold text-gray-900">Add Task</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-700"><X className="w-5 h-5" /></button>
+        </div>
+        <div className="p-5 space-y-3">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Title *</label>
+            <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Send proposal" className="w-full h-10 px-3 rounded-lg border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20" />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Due Date</label>
+              <input type="datetime-local" value={dueAt} onChange={(e) => setDueAt(e.target.value)} className="w-full h-10 px-3 rounded-lg border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Priority</label>
+              <select value={priority} onChange={(e) => setPriority(e.target.value)} className="w-full h-10 px-3 rounded-lg border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20">
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Lead *</label>
+            {selectedLead ? (
+              <div className="flex items-center justify-between h-10 px-3 rounded-lg border border-green-300 bg-green-50 text-sm">
+                <span className="font-medium text-green-800">{selectedLead.title}</span>
+                <button onClick={() => { setSelectedLead(null); setLeadSearch('') }} className="text-green-600"><X className="w-3.5 h-3.5" /></button>
+              </div>
+            ) : (
+              <div className="relative">
+                <input value={leadSearch} onChange={(e) => setLeadSearch(e.target.value)} placeholder="Search lead…" className="w-full h-10 px-3 rounded-lg border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20" />
+                {leadResults?.data?.length > 0 && (
+                  <div className="absolute top-full mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg z-10 overflow-hidden">
+                    {leadResults.data.slice(0, 4).map((l: any) => (
+                      <button key={l.id} onClick={() => { setSelectedLead(l); setLeadSearch('') }} className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50">{l.title}</button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Assign To</label>
+            <select value={assignedToId} onChange={(e) => setAssignedToId(e.target.value)} className="w-full h-10 px-3 rounded-lg border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20">
+              <option value="">Me</option>
+              {users.map((u: any) => <option key={u.id} value={u.id}>{u.name}</option>)}
+            </select>
+          </div>
+        </div>
+        <div className="flex justify-end gap-2 p-5 border-t border-gray-200">
+          <button onClick={onClose} className="px-4 py-2 text-sm border border-gray-200 rounded-lg hover:bg-gray-50">Cancel</button>
+          <button
+            onClick={() => create.mutate()}
+            disabled={create.isPending || !title.trim() || !selectedLead}
+            className="px-4 py-2 text-sm text-white bg-primary rounded-lg hover:bg-primary/90 disabled:opacity-50"
+          >
+            {create.isPending ? 'Saving…' : 'Add Task'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
 
 type ReminderTab = 'Today' | 'Upcoming' | 'Overdue' | 'Done'
 
 export default function RemindersPage() {
   const [tab, setTab] = useState<ReminderTab>('Today')
+  const [showAddReminder, setShowAddReminder] = useState(false)
+  const [showAddTask, setShowAddTask] = useState(false)
 
   const { data: todayReminders = [], isLoading: l1 } = useReminders('today')
   const { data: upcomingReminders = [], isLoading: l2 } = useReminders('upcoming')
@@ -44,11 +229,17 @@ export default function RemindersPage() {
           </p>
         </div>
         <div className="flex gap-2">
-          <button className="flex items-center gap-1.5 px-3 py-2 text-sm border border-gray-200 rounded-lg hover:bg-gray-50">
+          <button
+            onClick={() => setShowAddReminder(true)}
+            className="flex items-center gap-1.5 px-3 py-2 text-sm border border-gray-200 rounded-lg hover:bg-gray-50"
+          >
             <Bell className="w-4 h-4 text-amber-500" />
             Add Reminder
           </button>
-          <button className="flex items-center gap-1.5 px-3 py-2 text-sm text-white bg-primary rounded-lg hover:bg-primary/90">
+          <button
+            onClick={() => setShowAddTask(true)}
+            className="flex items-center gap-1.5 px-3 py-2 text-sm text-white bg-primary rounded-lg hover:bg-primary/90"
+          >
             <Plus className="w-4 h-4" />
             Add Task
           </button>
@@ -177,6 +368,9 @@ export default function RemindersPage() {
           <p className="text-sm text-gray-400 text-center py-12">Nothing here</p>
         )}
       </div>
+
+      {showAddReminder && <AddReminderModal onClose={() => setShowAddReminder(false)} />}
+      {showAddTask && <AddTaskModal onClose={() => setShowAddTask(false)} />}
     </div>
   )
 }

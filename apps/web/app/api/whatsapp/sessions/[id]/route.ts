@@ -1,4 +1,5 @@
 import { NextRequest } from 'next/server'
+import QRCode from 'qrcode'
 import { prisma } from '@crm/db'
 import { getSessionUser } from '@/lib/api/auth-guard'
 import { hasPermission } from '@/lib/permissions'
@@ -34,16 +35,33 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 
     if (action === 'qr') {
       // Try to get fresh QR from engine
+      let rawQR: string | null = null
+      let qrExpiresAt: Date | null = null
       try {
-        const res = await proxyToEngine(`/sessions/${params.id}/qr`, 'GET')
+        const res = await proxyToEngine(`/sessions/${params.id}/status`, 'GET')
         if (res.ok) {
           const data = await res.json()
-          return ok(data)
+          if (data.qr?.qr) {
+            rawQR = data.qr.qr
+            qrExpiresAt = data.qr.expiresAt ? new Date(data.qr.expiresAt) : null
+          }
         }
       } catch {
-        // Engine not available, return stored QR
+        // Engine not available, fall back to stored QR
       }
-      return ok({ qrCode: session.qrCode, qrExpiresAt: session.qrExpiresAt })
+      // Fall back to stored QR
+      if (!rawQR && session.qrCode) {
+        rawQR = session.qrCode
+        qrExpiresAt = session.qrExpiresAt
+      }
+      // Re-fetch current status from DB (may have been updated by internal event)
+      const freshSession = await prisma.whatsAppSession.findUnique({ where: { id: params.id } })
+      const currentStatus = freshSession?.status ?? session.status
+
+      if (!rawQR) return ok({ qrDataUrl: null, qrExpiresAt: null, status: currentStatus })
+      // Convert raw QR string to data URL (PNG)
+      const qrDataUrl = await QRCode.toDataURL(rawQR, { width: 300, margin: 2 })
+      return ok({ qrDataUrl, qrExpiresAt, status: currentStatus })
     }
 
     return ok(session)
@@ -68,7 +86,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
     // Proxy to WhatsApp engine
     try {
-      const res = await proxyToEngine(`/sessions/${params.id}/${action}`)
+      const engineBody = action === 'start' ? { accountId: session.accountId } : undefined
+      const res = await proxyToEngine(`/sessions/${params.id}/${action}`, 'POST', engineBody)
       if (res.ok) {
         const data = await res.json()
         // Update status in DB

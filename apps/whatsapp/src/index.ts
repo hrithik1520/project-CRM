@@ -8,6 +8,11 @@ const INTERNAL_SECRET = process.env.INTERNAL_SECRET ?? ''
 const app = express()
 app.use(express.json({ limit: '5mb' }))
 
+// ── Health check (no auth) ───────────────────────────────────────────────────
+app.get('/health', (_req, res) => {
+  res.json({ ok: true, uptime: process.uptime() })
+})
+
 // ── Auth middleware — all routes require the internal secret ─────────────────
 app.use((req, res, next) => {
   const auth = req.headers.authorization
@@ -18,12 +23,6 @@ app.use((req, res, next) => {
   next()
 })
 
-// ── Health check (no auth) — place before auth middleware in production ──────
-// (Caddy/Docker health check)
-app.get('/health', (_req, res) => {
-  res.json({ ok: true, uptime: process.uptime() })
-})
-
 // ── Routes ───────────────────────────────────────────────────────────────────
 app.use('/sessions', sessionsRouter)
 
@@ -32,8 +31,12 @@ app.listen(PORT, () => {
   console.log(`[whatsapp-engine] Running on port ${PORT}`)
 })
 
-// Start BullMQ send worker
-startSendWorker()
+// Start BullMQ send worker (optional — skipped if Redis is unavailable)
+try {
+  startSendWorker()
+} catch (err) {
+  console.warn('[whatsapp-engine] BullMQ worker not started (Redis unavailable?):', err)
+}
 
 // Graceful shutdown
 process.on('SIGTERM', async () => {

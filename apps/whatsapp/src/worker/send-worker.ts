@@ -7,6 +7,15 @@ const WEB_APP_URL = process.env.WEB_APP_URL ?? 'http://localhost:3000'
 const INTERNAL_SECRET = process.env.INTERNAL_SECRET ?? ''
 
 export function startSendWorker() {
+  const connection = {
+    host: new URL(REDIS_URL).hostname,
+    port: parseInt(new URL(REDIS_URL).port || '6379'),
+    // Don't crash on connection failure — just log and retry
+    maxRetriesPerRequest: null,
+    lazyConnect: true,
+    enableOfflineQueue: false,
+  }
+
   const worker = new Worker<SendMessageJobPayload>(
     'whatsapp-send',
     async (job) => {
@@ -22,7 +31,7 @@ export function startSendWorker() {
       console.log(`[send-worker] Sent job ${job.id} — waId:${waMessageId}`)
     },
     {
-      connection: { host: new URL(REDIS_URL).hostname, port: parseInt(new URL(REDIS_URL).port || '6379') },
+      connection,
       concurrency: 4,
       // Retry config: 3 attempts with exponential backoff
       removeOnComplete: { count: 1000 },
@@ -38,6 +47,10 @@ export function startSendWorker() {
     if (job.attemptsMade >= (job.opts.attempts ?? 3)) {
       await notifyWebApp(job.data.messageId, 'failed', undefined, err.message)
     }
+  })
+
+  worker.on('error', (err) => {
+    console.warn('[send-worker] Worker error (Redis unavailable?):', err.message)
   })
 
   console.log('[send-worker] Started — listening for jobs')

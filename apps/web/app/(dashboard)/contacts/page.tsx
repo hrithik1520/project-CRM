@@ -2,8 +2,62 @@
 
 import { useState } from 'react'
 import { Search, Plus, Phone, Mail, Building2, Tag, ChevronRight, X } from 'lucide-react'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useContacts, type Contact } from '@/lib/hooks/use-contacts'
+import { api } from '@/lib/api/client'
 import { cn, formatRelativeTime } from '@/lib/utils'
+
+function NewContactModal({ onClose }: { onClose: () => void }) {
+  const qc = useQueryClient()
+  const [name, setName] = useState('')
+  const [phone, setPhone] = useState('')
+  const [email, setEmail] = useState('')
+  const [company, setCompany] = useState('')
+
+  const create = useMutation({
+    mutationFn: () => api.post('/api/contacts', { name: name.trim(), phone: phone.trim(), email: email.trim() || undefined, company: company.trim() || undefined }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['contacts'] }); onClose() },
+  })
+
+  return (
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl w-full max-w-sm shadow-xl">
+        <div className="flex items-center justify-between p-5 border-b border-gray-200">
+          <h2 className="text-base font-semibold text-gray-900">New Contact</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-700"><X className="w-5 h-5" /></button>
+        </div>
+        <div className="p-5 space-y-3">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Name *</label>
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Ravi Sharma" className="w-full h-10 px-3 rounded-lg border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Phone *</label>
+            <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+91 98765 43210" type="tel" className="w-full h-10 px-3 rounded-lg border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+            <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="ravi@example.com" type="email" className="w-full h-10 px-3 rounded-lg border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Company</label>
+            <input value={company} onChange={(e) => setCompany(e.target.value)} placeholder="Acme Ltd." className="w-full h-10 px-3 rounded-lg border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20" />
+          </div>
+        </div>
+        <div className="flex justify-end gap-2 p-5 border-t border-gray-200">
+          <button onClick={onClose} className="px-4 py-2 text-sm border border-gray-200 rounded-lg hover:bg-gray-50">Cancel</button>
+          <button
+            onClick={() => create.mutate()}
+            disabled={create.isPending || !name.trim() || !phone.trim()}
+            className="px-4 py-2 text-sm text-white bg-primary rounded-lg hover:bg-primary/90 disabled:opacity-50"
+          >
+            {create.isPending ? 'Creating…' : 'Create Contact'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
 
 const TAG_COLORS: Record<string, string> = {
   hot: 'bg-red-100 text-red-700',
@@ -17,6 +71,7 @@ export default function ContactsPage() {
   const [search, setSearch] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
   const [selected, setSelected] = useState<Contact | null>(null)
+  const [showNewContact, setShowNewContact] = useState(false)
 
   const { data, isLoading } = useContacts({ search: debouncedSearch || undefined, pageSize: 100 })
   const contacts = data?.data ?? []
@@ -39,7 +94,10 @@ export default function ContactsPage() {
               {isLoading ? '…' : `${data?.total ?? 0} contacts`}
             </p>
           </div>
-          <button className="flex items-center gap-1.5 px-3 py-2 text-sm text-white bg-primary rounded-lg hover:bg-primary/90">
+          <button
+            onClick={() => setShowNewContact(true)}
+            className="flex items-center gap-1.5 px-3 py-2 text-sm text-white bg-primary rounded-lg hover:bg-primary/90"
+          >
             <Plus className="w-4 h-4" />
             New Contact
           </button>
@@ -127,6 +185,8 @@ export default function ContactsPage() {
           )}
         </div>
       </div>
+
+      {showNewContact && <NewContactModal onClose={() => setShowNewContact(false)} />}
 
       {/* Detail drawer */}
       {selected && (

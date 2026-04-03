@@ -20,9 +20,17 @@ const bodySchema = z.object({
 })
 
 export async function POST(req: NextRequest) {
-  // Auth: X-Webhook-Secret header
+  // Auth: X-Webhook-Secret header — accepts env secret OR any active DB webhook secret
   const secret = req.headers.get('x-webhook-secret')
-  if (!secret || secret !== INTERNAL_SECRET) return unauthorized()
+  if (!secret) return unauthorized()
+
+  const isEnvSecret = secret === INTERNAL_SECRET
+  if (!isEnvSecret) {
+    const dbWebhook = await prisma.webhook.findFirst({ where: { secret, isActive: true } })
+    if (!dbWebhook) return unauthorized()
+    // Increment hit counter (fire-and-forget)
+    prisma.webhook.update({ where: { id: dbWebhook.id }, data: { totalHits: { increment: 1 }, lastHitAt: new Date() } }).catch(() => null)
+  }
 
   try {
     const raw = await req.json()

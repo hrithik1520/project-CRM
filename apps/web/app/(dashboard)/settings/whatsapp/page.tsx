@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { Wifi, WifiOff, AlertCircle, Plus, QrCode, Trash2, RefreshCw, X } from 'lucide-react'
+import { Wifi, WifiOff, AlertCircle, Plus, QrCode, Trash2, RefreshCw, X, CheckCircle2 } from 'lucide-react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/api/client'
 import { cn, formatRelativeTime } from '@/lib/utils'
@@ -72,6 +72,68 @@ function SessionSkeleton() {
         <div className="space-y-1.5">
           <div className="h-4 w-32 bg-gray-200 rounded" />
           <div className="h-3 w-24 bg-gray-100 rounded" />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function QRModal({ sessionId, onClose }: { sessionId: string; onClose: () => void }) {
+  const { data, isLoading } = useQuery<{ qrDataUrl: string | null; qrExpiresAt: string | null; status?: string }>({
+    queryKey: ['whatsapp-qr', sessionId],
+    queryFn: () => api.get(`/api/whatsapp/sessions/${sessionId}?action=qr`),
+    refetchInterval: (query) => {
+      if (query.state.data?.status === 'connected') return false
+      return 3000
+    },
+  })
+
+  const isConnected = data?.status === 'connected'
+
+  return (
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl w-full max-w-sm shadow-xl">
+        <div className="flex items-center justify-between p-5 border-b border-gray-200">
+          <h2 className="text-base font-semibold text-gray-900">Connect WhatsApp</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-700">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        <div className="p-6 text-center">
+          {isConnected ? (
+            <div className="flex flex-col items-center gap-3 py-4">
+              <div className="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center">
+                <CheckCircle2 className="w-8 h-8 text-green-500" />
+              </div>
+              <p className="text-sm font-semibold text-gray-900">Connected!</p>
+              <p className="text-xs text-gray-500">WhatsApp linked successfully</p>
+              <button onClick={onClose} className="mt-2 px-4 py-2 text-sm text-white bg-primary rounded-lg">
+                Done
+              </button>
+            </div>
+          ) : (
+            <>
+              <div className="w-56 h-56 mx-auto bg-gray-50 rounded-xl flex items-center justify-center mb-4 border border-gray-100">
+                {isLoading || !data?.qrDataUrl ? (
+                  <div className="flex flex-col items-center gap-2">
+                    <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                    <p className="text-xs text-gray-400">Waiting for QR…</p>
+                  </div>
+                ) : (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={data.qrDataUrl} alt="WhatsApp QR Code" className="w-full h-full rounded-xl object-contain" />
+                )}
+              </div>
+              <p className="text-sm font-medium text-gray-900 mb-2">Scan with WhatsApp</p>
+              <ol className="text-xs text-gray-500 text-left space-y-1 bg-gray-50 rounded-lg p-3">
+                <li>1. Open WhatsApp on your phone</li>
+                <li>2. Tap Settings → Linked Devices</li>
+                <li>3. Tap "Link a Device"</li>
+                <li>4. Scan this QR code</li>
+              </ol>
+              <p className="text-xs text-gray-400 mt-3">QR refreshes automatically every 60 seconds</p>
+            </>
+          )}
         </div>
       </div>
     </div>
@@ -255,30 +317,11 @@ export default function WhatsAppSettingsPage() {
       )}
 
       {/* QR Code Modal */}
-      {showQRModal && (
-        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl w-full max-w-sm shadow-xl">
-            <div className="flex items-center justify-between p-5 border-b border-gray-200">
-              <h2 className="text-base font-semibold text-gray-900">Connect WhatsApp</h2>
-              <button onClick={() => setShowQRModal(false)} className="text-gray-400 hover:text-gray-700">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <div className="p-6 text-center">
-              <div className="w-48 h-48 mx-auto bg-gray-100 rounded-xl flex items-center justify-center mb-4">
-                <QrCode className="w-16 h-16 text-gray-300" />
-              </div>
-              <p className="text-sm font-medium text-gray-900 mb-2">Scan with WhatsApp</p>
-              <ol className="text-xs text-gray-500 text-left space-y-1 bg-gray-50 rounded-lg p-3">
-                <li>1. Open WhatsApp on your phone</li>
-                <li>2. Tap Settings → Linked Devices</li>
-                <li>3. Tap "Link a Device"</li>
-                <li>4. Scan this QR code</li>
-              </ol>
-              <p className="text-xs text-gray-400 mt-3">QR refreshes automatically every 60 seconds</p>
-            </div>
-          </div>
-        </div>
+      {showQRModal && activeSessionId && (
+        <QRModal
+          sessionId={activeSessionId}
+          onClose={() => { setShowQRModal(false); setActiveSessionId(null) }}
+        />
       )}
     </div>
   )

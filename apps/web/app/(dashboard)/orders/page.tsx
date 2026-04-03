@@ -1,9 +1,146 @@
 'use client'
 
 import { useState } from 'react'
-import { Plus, ChevronRight, X } from 'lucide-react'
+import { Plus, ChevronRight, X, Trash2 } from 'lucide-react'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useOrders, useUpdateOrderStatus, type Order } from '@/lib/hooks/use-orders'
+import { api } from '@/lib/api/client'
 import { cn, formatCurrency, formatDate } from '@/lib/utils'
+
+interface OrderItem { name: string; quantity: number; unitPrice: number }
+
+function NewOrderModal({ onClose }: { onClose: () => void }) {
+  const qc = useQueryClient()
+  const [title, setTitle] = useState('')
+  const [leadSearch, setLeadSearch] = useState('')
+  const [selectedLead, setSelectedLead] = useState<any>(null)
+  const [items, setItems] = useState<OrderItem[]>([{ name: '', quantity: 1, unitPrice: 0 }])
+
+  const { data: leadResults } = useQuery<any>({
+    queryKey: ['lead-search-order', leadSearch],
+    queryFn: () => api.get(`/api/leads?search=${encodeURIComponent(leadSearch)}&pageSize=5`),
+    enabled: leadSearch.length >= 2 && !selectedLead,
+  })
+
+  const create = useMutation({
+    mutationFn: () => api.post('/api/orders', {
+      title: title.trim(),
+      leadId: selectedLead.id,
+      contactId: selectedLead.contact.id,
+      items: items.filter((i) => i.name.trim()).map((i) => ({ name: i.name.trim(), quantity: i.quantity, unitPrice: i.unitPrice })),
+    }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['orders'] }); onClose() },
+  })
+
+  function addItem() { setItems([...items, { name: '', quantity: 1, unitPrice: 0 }]) }
+  function removeItem(i: number) { setItems(items.filter((_, idx) => idx !== i)) }
+  function updateItem(i: number, field: keyof OrderItem, value: any) {
+    setItems(items.map((item, idx) => idx === i ? { ...item, [field]: value } : item))
+  }
+
+  const total = items.reduce((sum, i) => sum + i.quantity * i.unitPrice, 0)
+  const canSubmit = title.trim() && selectedLead && items.some((i) => i.name.trim() && i.unitPrice > 0)
+
+  return (
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl w-full max-w-lg shadow-xl">
+        <div className="flex items-center justify-between p-5 border-b border-gray-200">
+          <h2 className="text-base font-semibold text-gray-900">New Order</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-700"><X className="w-5 h-5" /></button>
+        </div>
+        <div className="p-5 space-y-4 max-h-[70vh] overflow-y-auto">
+          {/* Title */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">Order Title *</label>
+            <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Bulk T-shirts — June 2026" className="w-full h-10 px-3 rounded-lg border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20" />
+          </div>
+
+          {/* Lead picker */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">Linked Lead *</label>
+            {selectedLead ? (
+              <div className="flex items-center justify-between h-10 px-3 rounded-lg border border-green-300 bg-green-50 text-sm">
+                <span className="font-medium text-green-800">{selectedLead.title}</span>
+                <button onClick={() => { setSelectedLead(null); setLeadSearch('') }} className="text-green-600 hover:text-green-800"><X className="w-4 h-4" /></button>
+              </div>
+            ) : (
+              <div className="relative">
+                <input
+                  value={leadSearch}
+                  onChange={(e) => setLeadSearch(e.target.value)}
+                  placeholder="Search leads by title…"
+                  className="w-full h-10 px-3 rounded-lg border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20"
+                />
+                {leadResults?.data?.length > 0 && (
+                  <div className="absolute top-full mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg z-10 overflow-hidden">
+                    {leadResults.data.slice(0, 5).map((l: any) => (
+                      <button key={l.id} onClick={() => { setSelectedLead(l); setLeadSearch('') }} className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50">
+                        <span className="font-medium text-gray-900">{l.title}</span>
+                        <span className="text-gray-400 text-xs ml-2">— {l.contact.name}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Items */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-sm font-medium text-gray-700">Items *</label>
+              <button onClick={addItem} className="text-xs text-primary hover:text-primary/80 flex items-center gap-1"><Plus className="w-3 h-3" /> Add item</button>
+            </div>
+            <div className="space-y-2">
+              {items.map((item, i) => (
+                <div key={i} className="flex gap-2 items-center">
+                  <input
+                    value={item.name}
+                    onChange={(e) => updateItem(i, 'name', e.target.value)}
+                    placeholder="Item name"
+                    className="flex-1 h-9 px-2 rounded-lg border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20"
+                  />
+                  <input
+                    type="number"
+                    value={item.quantity}
+                    onChange={(e) => updateItem(i, 'quantity', parseInt(e.target.value) || 1)}
+                    min={1}
+                    className="w-14 h-9 px-2 rounded-lg border border-gray-300 text-sm text-center focus:outline-none focus:ring-2 focus:ring-primary/20"
+                  />
+                  <input
+                    type="number"
+                    value={item.unitPrice || ''}
+                    onChange={(e) => updateItem(i, 'unitPrice', parseFloat(e.target.value) || 0)}
+                    placeholder="₹"
+                    className="w-24 h-9 px-2 rounded-lg border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20"
+                  />
+                  {items.length > 1 && (
+                    <button onClick={() => removeItem(i)} className="text-red-400 hover:text-red-600"><Trash2 className="w-4 h-4" /></button>
+                  )}
+                </div>
+              ))}
+            </div>
+            {total > 0 && (
+              <div className="flex justify-end mt-2 text-sm font-semibold text-gray-900">
+                Total: {formatCurrency(total)}
+              </div>
+            )}
+          </div>
+        </div>
+        <div className="flex justify-end gap-2 p-5 border-t border-gray-200">
+          <button onClick={onClose} className="px-4 py-2 text-sm border border-gray-200 rounded-lg hover:bg-gray-50">Cancel</button>
+          <button
+            onClick={() => create.mutate()}
+            disabled={create.isPending || !canSubmit}
+            className="px-4 py-2 text-sm text-white bg-primary rounded-lg hover:bg-primary/90 disabled:opacity-50"
+          >
+            {create.isPending ? 'Creating…' : 'Create Order'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
 
 const ORDER_STATUS_COLORS: Record<string, string> = {
   pending: 'bg-gray-100 text-gray-600',
@@ -14,6 +151,7 @@ const ORDER_STATUS_COLORS: Record<string, string> = {
 
 export default function OrdersPage() {
   const [selected, setSelected] = useState<Order | null>(null)
+  const [showNewOrder, setShowNewOrder] = useState(false)
   const { data, isLoading } = useOrders({ pageSize: 100 })
   const orders = data?.data ?? []
 
@@ -32,7 +170,10 @@ export default function OrdersPage() {
             <h1 className="text-xl font-semibold text-gray-900">Orders</h1>
             <p className="text-sm text-gray-500 mt-0.5">{isLoading ? '…' : `${data?.total ?? 0} orders`}</p>
           </div>
-          <button className="flex items-center gap-1.5 px-3 py-2 text-sm text-white bg-primary rounded-lg hover:bg-primary/90">
+          <button
+            onClick={() => setShowNewOrder(true)}
+            className="flex items-center gap-1.5 px-3 py-2 text-sm text-white bg-primary rounded-lg hover:bg-primary/90"
+          >
             <Plus className="w-4 h-4" />
             New Order
           </button>
@@ -112,6 +253,8 @@ export default function OrdersPage() {
           )}
         </div>
       </div>
+
+      {showNewOrder && <NewOrderModal onClose={() => setShowNewOrder(false)} />}
 
       {/* Order detail drawer */}
       {selected && (

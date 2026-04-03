@@ -2,7 +2,16 @@ import { NextRequest } from 'next/server'
 import { prisma } from '@crm/db'
 import { getSessionUser } from '@/lib/api/auth-guard'
 import { hasPermission } from '@/lib/permissions'
-import { ok, unauthorized, serverError } from '@/lib/api/response'
+import { ok, created, unauthorized, serverError } from '@/lib/api/response'
+import { createLeadActivity } from '@/lib/api/audit'
+import { z } from 'zod'
+
+const createSchema = z.object({
+  leadId: z.string().uuid(),
+  title: z.string().min(1).max(200),
+  dueAt: z.string().datetime(),
+  assignedToId: z.string().uuid().optional(),
+})
 
 export async function GET(req: NextRequest) {
   const user = await getSessionUser()
@@ -40,6 +49,32 @@ export async function GET(req: NextRequest) {
       },
     })
     return ok(reminders)
+  } catch (err) {
+    return serverError(err)
+  }
+}
+
+export async function POST(req: NextRequest) {
+  const user = await getSessionUser()
+  if (!user) return unauthorized()
+
+  try {
+    const body = createSchema.parse(await req.json())
+    const reminder = await prisma.reminder.create({
+      data: {
+        title: body.title,
+        dueAt: new Date(body.dueAt),
+        leadId: body.leadId,
+        createdById: user.id,
+        assignedToId: body.assignedToId ?? user.id,
+      },
+      include: {
+        lead: { select: { id: true, title: true } },
+        assignedTo: { select: { id: true, name: true } },
+      },
+    })
+    await createLeadActivity(body.leadId, user.id, 'reminder_set', `Reminder set: ${body.title}`, { reminderId: reminder.id })
+    return created(reminder)
   } catch (err) {
     return serverError(err)
   }
