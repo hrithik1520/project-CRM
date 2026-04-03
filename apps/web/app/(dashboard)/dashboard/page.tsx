@@ -1,3 +1,5 @@
+'use client'
+
 import {
   TrendingUp,
   Users,
@@ -13,43 +15,34 @@ import {
   MessageSquare,
 } from 'lucide-react'
 import Link from 'next/link'
-import { DUMMY_SESSIONS, DUMMY_REMINDERS, DUMMY_TASKS, DUMMY_ACTIVITY, DUMMY_STAGES } from '@/lib/dummy-data'
+import { useDashboard } from '@/lib/hooks/use-dashboard'
 import { formatRelativeTime, formatCurrency } from '@/lib/utils'
 import { cn } from '@/lib/utils'
 
-const STAT_CARDS = [
-  { label: 'Total Active Leads', value: '26', delta: '+4 this week', icon: TrendingUp, color: 'text-blue-600', bg: 'bg-blue-50' },
-  { label: 'New Leads Today', value: '3', delta: '+1 since yesterday', icon: Users, color: 'text-purple-600', bg: 'bg-purple-50' },
-  { label: 'Won This Month', value: '9', delta: '₹3.2L revenue', icon: CheckCircle2, color: 'text-green-600', bg: 'bg-green-50' },
-  { label: 'Revenue This Month', value: '₹4,65,000', delta: '+18% vs last month', icon: IndianRupee, color: 'text-amber-600', bg: 'bg-amber-50' },
-]
+type SessionStatus = 'connected' | 'disconnected' | 'requires_reauth' | string
 
-function SessionBadge({ session }: { session: (typeof DUMMY_SESSIONS)[0] }) {
-  const icon = {
-    connected: <Wifi className="w-4 h-4 text-green-600" />,
-    disconnected: <WifiOff className="w-4 h-4 text-red-500" />,
-    requires_reauth: <AlertCircle className="w-4 h-4 text-amber-500" />,
-  }[session.status]
+function SessionBadge({ session }: { session: { id: string; status: SessionStatus; whatsappAccount: { name: string; phoneNumber: string } } }) {
+  const icon = session.status === 'connected'
+    ? <Wifi className="w-4 h-4 text-green-600" />
+    : session.status === 'requires_reauth'
+    ? <AlertCircle className="w-4 h-4 text-amber-500" />
+    : <WifiOff className="w-4 h-4 text-red-500" />
 
-  const label = {
-    connected: 'Connected',
-    disconnected: 'Disconnected',
-    requires_reauth: 'Needs Reauth',
-  }[session.status]
+  const label = session.status === 'connected' ? 'Connected' : session.status === 'requires_reauth' ? 'Needs Reauth' : 'Disconnected'
 
-  const colors = {
-    connected: 'border-green-200 bg-green-50',
-    disconnected: 'border-red-200 bg-red-50',
-    requires_reauth: 'border-amber-200 bg-amber-50',
-  }[session.status]
+  const colors = session.status === 'connected'
+    ? 'border-green-200 bg-green-50'
+    : session.status === 'requires_reauth'
+    ? 'border-amber-200 bg-amber-50'
+    : 'border-red-200 bg-red-50'
 
   return (
     <div className={cn('flex items-center justify-between p-3 rounded-lg border', colors)}>
       <div className="flex items-center gap-2.5">
         {icon}
         <div>
-          <p className="text-sm font-medium text-gray-900">{session.name}</p>
-          <p className="text-xs text-gray-500">{session.phone}</p>
+          <p className="text-sm font-medium text-gray-900">{session.whatsappAccount.name}</p>
+          <p className="text-xs text-gray-500">{session.whatsappAccount.phoneNumber}</p>
         </div>
       </div>
       <span className="text-xs font-medium text-gray-600">{label}</span>
@@ -63,7 +56,7 @@ function ActivityIcon({ type }: { type: string }) {
     lead_created: <Users className="w-3.5 h-3.5 text-purple-500" />,
     stage_moved: <ArrowRight className="w-3.5 h-3.5 text-amber-500" />,
     order_created: <IndianRupee className="w-3.5 h-3.5 text-green-500" />,
-    payment_updated: <CheckCircle2 className="w-3.5 h-3.5 text-green-600" />,
+    payment_received: <CheckCircle2 className="w-3.5 h-3.5 text-green-600" />,
   }
   return (
     <div className="w-6 h-6 rounded-full bg-gray-100 flex items-center justify-center shrink-0">
@@ -73,8 +66,7 @@ function ActivityIcon({ type }: { type: string }) {
 }
 
 export default function DashboardPage() {
-  const dueToday = DUMMY_REMINDERS.filter((r) => !r.isDone && r.dueAt <= new Date(Date.now() + 8 * 3600000))
-  const overdue = DUMMY_REMINDERS.filter((r) => !r.isDone && r.dueAt < new Date())
+  const { data: stats, isLoading } = useDashboard()
 
   return (
     <div className="p-6 space-y-6 max-w-7xl mx-auto">
@@ -88,7 +80,40 @@ export default function DashboardPage() {
 
       {/* Stat cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {STAT_CARDS.map((stat) => (
+        {[
+          {
+            label: 'Active Leads',
+            value: isLoading ? '—' : String(stats?.leads.active ?? 0),
+            delta: isLoading ? '' : `+${stats?.leads.newThisMonth ?? 0} this month`,
+            icon: TrendingUp,
+            color: 'text-blue-600',
+            bg: 'bg-blue-50',
+          },
+          {
+            label: 'Won This Month',
+            value: isLoading ? '—' : String(stats?.leads.won ?? 0),
+            delta: '',
+            icon: CheckCircle2,
+            color: 'text-green-600',
+            bg: 'bg-green-50',
+          },
+          {
+            label: 'Lost This Month',
+            value: isLoading ? '—' : String(stats?.leads.lost ?? 0),
+            delta: '',
+            icon: Users,
+            color: 'text-red-500',
+            bg: 'bg-red-50',
+          },
+          {
+            label: 'Revenue This Month',
+            value: isLoading ? '—' : formatCurrency(stats?.revenue.thisMonth ?? 0),
+            delta: isLoading ? '' : `Total: ${formatCurrency(stats?.revenue.total ?? 0)}`,
+            icon: IndianRupee,
+            color: 'text-amber-600',
+            bg: 'bg-amber-50',
+          },
+        ].map((stat) => (
           <div key={stat.label} className="bg-white rounded-xl border border-gray-200 p-4">
             <div className="flex items-center justify-between mb-3">
               <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">{stat.label}</p>
@@ -97,7 +122,7 @@ export default function DashboardPage() {
               </div>
             </div>
             <p className="text-2xl font-bold text-gray-900">{stat.value}</p>
-            <p className="text-xs text-gray-500 mt-1">{stat.delta}</p>
+            {stat.delta && <p className="text-xs text-gray-500 mt-1">{stat.delta}</p>}
           </div>
         ))}
       </div>
@@ -112,23 +137,27 @@ export default function DashboardPage() {
             </Link>
           </div>
           <div className="space-y-2">
-            {DUMMY_STAGES.map((stage) => (
-              <div key={stage.id} className="flex items-center gap-3">
-                <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: stage.color }} />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-xs text-gray-700 truncate">{stage.name}</span>
-                    <span className="text-xs font-medium text-gray-900 ml-2">{stage.count}</span>
-                  </div>
-                  <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                    <div
-                      className="h-full rounded-full"
-                      style={{ width: `${(stage.count / 10) * 100}%`, backgroundColor: stage.color }}
-                    />
+            {isLoading && <p className="text-xs text-gray-400 text-center py-4">Loading…</p>}
+            {stats?.pipelineSummary.map((stage) => {
+              const max = Math.max(...(stats.pipelineSummary.map((s) => s._count.leads)), 1)
+              return (
+                <div key={stage.id} className="flex items-center gap-3">
+                  <div className="w-2 h-2 rounded-full shrink-0 bg-blue-400" />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs text-gray-700 truncate">{stage.name}</span>
+                      <span className="text-xs font-medium text-gray-900 ml-2">{stage._count.leads}</span>
+                    </div>
+                    <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                      <div
+                        className="h-full rounded-full bg-blue-400"
+                        style={{ width: `${(stage._count.leads / max) * 100}%` }}
+                      />
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
         </div>
 
@@ -141,7 +170,11 @@ export default function DashboardPage() {
             </Link>
           </div>
           <div className="space-y-2">
-            {DUMMY_SESSIONS.map((session) => (
+            {isLoading && <p className="text-xs text-gray-400 text-center py-4">Loading…</p>}
+            {!isLoading && !stats?.whatsappSessions.length && (
+              <p className="text-xs text-gray-500 text-center py-4">No sessions configured</p>
+            )}
+            {stats?.whatsappSessions.map((session) => (
               <SessionBadge key={session.id} session={session} />
             ))}
           </div>
@@ -155,33 +188,34 @@ export default function DashboardPage() {
               View all
             </Link>
           </div>
-          {overdue.length > 0 && (
+          {!isLoading && (stats?.overdue.reminders ?? 0) > 0 && (
             <div className="mb-3 px-3 py-2 bg-red-50 rounded-lg border border-red-200">
-              <p className="text-xs font-medium text-red-700">{overdue.length} overdue reminder{overdue.length > 1 ? 's' : ''}</p>
+              <p className="text-xs font-medium text-red-700">
+                {stats!.overdue.reminders} overdue reminder{stats!.overdue.reminders > 1 ? 's' : ''}
+              </p>
             </div>
           )}
+          {isLoading && <p className="text-xs text-gray-400 text-center py-4">Loading…</p>}
+          {!isLoading && (stats?.dueToday.reminders ?? 0) === 0 && (stats?.dueToday.tasks ?? 0) === 0 && (
+            <p className="text-xs text-gray-500 text-center py-4">Nothing due today 🎉</p>
+          )}
           <div className="space-y-2">
-            {dueToday.length === 0 && (
-              <p className="text-xs text-gray-500 text-center py-4">Nothing due today 🎉</p>
-            )}
-            {dueToday.map((r) => (
-              <div key={r.id} className="flex gap-2.5 p-2 rounded-lg hover:bg-gray-50">
+            {!isLoading && (stats?.dueToday.reminders ?? 0) > 0 && (
+              <div className="flex gap-2.5 p-2 rounded-lg bg-amber-50">
                 <Bell className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
-                <div className="min-w-0">
-                  <p className="text-xs font-medium text-gray-900 truncate">{r.note}</p>
-                  <p className="text-xs text-gray-500">{r.contactName} · {new Intl.DateTimeFormat('en-IN', { hour: '2-digit', minute: '2-digit' }).format(r.dueAt)}</p>
-                </div>
+                <p className="text-xs font-medium text-gray-900">
+                  {stats!.dueToday.reminders} reminder{stats!.dueToday.reminders > 1 ? 's' : ''} due today
+                </p>
               </div>
-            ))}
-            {DUMMY_TASKS.filter((t) => t.status !== 'done').slice(0, 2).map((task) => (
-              <div key={task.id} className="flex gap-2.5 p-2 rounded-lg hover:bg-gray-50">
+            )}
+            {!isLoading && (stats?.dueToday.tasks ?? 0) > 0 && (
+              <div className="flex gap-2.5 p-2 rounded-lg bg-blue-50">
                 <CheckSquare className="w-4 h-4 text-blue-500 shrink-0 mt-0.5" />
-                <div className="min-w-0">
-                  <p className="text-xs font-medium text-gray-900 truncate">{task.title}</p>
-                  <p className="text-xs text-gray-500">{task.leadTitle} · {task.assignedTo}</p>
-                </div>
+                <p className="text-xs font-medium text-gray-900">
+                  {stats!.dueToday.tasks} task{stats!.dueToday.tasks > 1 ? 's' : ''} due today
+                </p>
               </div>
-            ))}
+            )}
           </div>
         </div>
       </div>
@@ -191,14 +225,15 @@ export default function DashboardPage() {
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-sm font-semibold text-gray-900">Recent Activity</h2>
         </div>
+        {isLoading && <p className="text-xs text-gray-400 text-center py-4">Loading…</p>}
         <div className="space-y-3">
-          {DUMMY_ACTIVITY.map((item) => (
+          {stats?.recentActivity.map((item) => (
             <div key={item.id} className="flex items-start gap-3">
-              <ActivityIcon type={item.type} />
+              <ActivityIcon type={item.action} />
               <div className="flex-1 min-w-0">
                 <p className="text-sm text-gray-900">{item.description}</p>
                 <p className="text-xs text-gray-500">
-                  {item.user} · {formatRelativeTime(item.time)}
+                  {item.user.name} · {formatRelativeTime(new Date(item.createdAt))}
                 </p>
               </div>
             </div>

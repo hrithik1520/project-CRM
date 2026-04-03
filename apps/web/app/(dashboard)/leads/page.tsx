@@ -4,7 +4,6 @@ import { useState } from 'react'
 import {
   DndContext,
   DragEndEvent,
-  DragOverEvent,
   DragOverlay,
   DragStartEvent,
   PointerSensor,
@@ -14,13 +13,11 @@ import {
 } from '@dnd-kit/core'
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { Plus, List, LayoutGrid, Filter, Phone, Tag, User } from 'lucide-react'
+import { Plus, List, LayoutGrid, Filter, Phone } from 'lucide-react'
 import Link from 'next/link'
-import { DUMMY_LEADS, DUMMY_STAGES } from '@/lib/dummy-data'
+import { useLeads, useUpdateLead, type Lead } from '@/lib/hooks/use-leads'
+import { usePipelines, type Stage, type Pipeline } from '@/lib/hooks/use-pipelines'
 import { cn, formatRelativeTime } from '@/lib/utils'
-
-type Lead = (typeof DUMMY_LEADS)[0]
-type Stage = (typeof DUMMY_STAGES)[0]
 
 const TAG_COLORS: Record<string, string> = {
   hot: 'bg-red-100 text-red-700',
@@ -43,6 +40,8 @@ function LeadCard({ lead, isDragging = false }: { lead: Lead; isDragging?: boole
     transition,
     opacity: isSortableDragging ? 0.4 : 1,
   }
+
+  const tags = lead.leadTags.map((lt) => lt.tag.name)
 
   return (
     <div
@@ -69,13 +68,13 @@ function LeadCard({ lead, isDragging = false }: { lead: Lead; isDragging?: boole
       </div>
 
       <div className="flex items-center gap-1.5 text-xs text-gray-500 mb-2">
-        <User className="w-3 h-3" />
-        <span className="truncate">{lead.contactName}</span>
+        <Phone className="w-3 h-3" />
+        <span className="truncate">{lead.contact.name}</span>
       </div>
 
-      {lead.tags.length > 0 && (
+      {tags.length > 0 && (
         <div className="flex flex-wrap gap-1 mb-2">
-          {lead.tags.map((tag) => (
+          {tags.map((tag) => (
             <span key={tag} className={cn('px-1.5 py-0.5 rounded text-xs font-medium', TAG_COLORS[tag] ?? 'bg-gray-100 text-gray-600')}>
               {tag}
             </span>
@@ -86,44 +85,38 @@ function LeadCard({ lead, isDragging = false }: { lead: Lead; isDragging?: boole
       <div className="flex items-center justify-between text-xs text-gray-400">
         <div className="flex items-center gap-1">
           <div className="w-4 h-4 rounded-full bg-gray-200 flex items-center justify-center text-gray-600 font-medium text-[10px]">
-            {lead.assignedTo.charAt(0)}
+            {(lead.assignedTo?.name ?? '?').charAt(0)}
           </div>
-          <span>{lead.assignedTo}</span>
+          <span>{lead.assignedTo?.name ?? 'Unassigned'}</span>
         </div>
-        <span>{formatRelativeTime(lead.createdAt)}</span>
+        <span>{formatRelativeTime(new Date(lead.createdAt))}</span>
       </div>
     </div>
   )
 }
 
-function StageColumn({ stage, leads }: { stage: Stage; leads: Lead[] }) {
+function StageColumn({ stage, leads, onAddLead }: { stage: Stage; leads: Lead[]; onAddLead: (stageId: string) => void }) {
   return (
     <div className="flex flex-col w-[280px] shrink-0">
-      {/* Stage header */}
       <div className="flex items-center gap-2 mb-3 px-1">
-        <div className="w-2 h-2 rounded-full" style={{ backgroundColor: stage.color }} />
+        <div className="w-2 h-2 rounded-full" style={{ backgroundColor: stage.color ?? '#94a3b8' }} />
         <span className="text-sm font-semibold text-gray-900">{stage.name}</span>
-        <span className="ml-auto text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full">
-          {leads.length}
-        </span>
+        <span className="ml-auto text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full">{leads.length}</span>
       </div>
 
-      {/* Drop zone */}
       <SortableContext items={leads.map((l) => l.id)} strategy={verticalListSortingStrategy}>
         <div className="flex-1 space-y-2 min-h-[200px] p-2 rounded-xl bg-gray-50 border border-gray-200/50">
-          {leads.map((lead) => (
-            <LeadCard key={lead.id} lead={lead} />
-          ))}
+          {leads.map((lead) => <LeadCard key={lead.id} lead={lead} />)}
           {leads.length === 0 && (
-            <div className="flex items-center justify-center h-20 text-xs text-gray-400">
-              No leads
-            </div>
+            <div className="flex items-center justify-center h-20 text-xs text-gray-400">No leads</div>
           )}
         </div>
       </SortableContext>
 
-      {/* Add lead button */}
-      <button className="mt-2 flex items-center gap-1.5 px-2 py-1.5 text-xs text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors">
+      <button
+        onClick={() => onAddLead(stage.id)}
+        className="mt-2 flex items-center gap-1.5 px-2 py-1.5 text-xs text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
+      >
         <Plus className="w-3.5 h-3.5" />
         Add lead
       </button>
@@ -133,12 +126,18 @@ function StageColumn({ stage, leads }: { stage: Stage; leads: Lead[] }) {
 
 export default function LeadsPage() {
   const [view, setView] = useState<'board' | 'list'>('board')
-  const [leads, setLeads] = useState(DUMMY_LEADS)
+  const [activePipelineId, setActivePipelineId] = useState<string | undefined>()
   const [activeId, setActiveId] = useState<string | null>(null)
 
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
-  )
+  const { data: pipelines, isLoading: loadingPipelines } = usePipelines()
+  const activePipeline: Pipeline | undefined = pipelines?.find((p) => p.id === activePipelineId) ?? pipelines?.[0]
+
+  const { data: leadsData, isLoading: loadingLeads } = useLeads({ pipelineId: activePipeline?.id, pageSize: 200 })
+  const leads = leadsData?.data ?? []
+
+  const updateLead = useUpdateLead('')
+
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }))
 
   function handleDragStart(event: DragStartEvent) {
     setActiveId(event.active.id as string)
@@ -149,28 +148,22 @@ export default function LeadsPage() {
     setActiveId(null)
     if (!over) return
 
-    const activeLeadId = active.id as string
-    const overLeadId = over.id as string
-
-    // Find which stage the drop target belongs to
-    const overLead = leads.find((l) => l.id === overLeadId)
-    const activeLead = leads.find((l) => l.id === activeLeadId)
+    const activeLead = leads.find((l) => l.id === active.id)
     if (!activeLead) return
 
-    const targetStageId = overLead?.stageId ?? overLeadId
+    const overLead = leads.find((l) => l.id === over.id)
+    const stages = activePipeline?.stages ?? []
+    const isStage = stages.some((s) => s.id === over.id)
 
-    // Check if it's a stage id
-    const isStage = DUMMY_STAGES.some((s) => s.id === overLeadId)
-    if (isStage || (overLead && overLead.stageId !== activeLead.stageId)) {
-      setLeads((prev) =>
-        prev.map((l) =>
-          l.id === activeLeadId ? { ...l, stageId: isStage ? overLeadId : overLead!.stageId } : l
-        )
-      )
+    const targetStageId = isStage ? (over.id as string) : overLead?.stageId
+    if (targetStageId && targetStageId !== activeLead.stageId) {
+      updateLead.mutate({ stageId: targetStageId } as any)
     }
   }
 
   const activeLead = leads.find((l) => l.id === activeId)
+  const stages = activePipeline?.stages ?? []
+  const isLoading = loadingPipelines || loadingLeads
 
   return (
     <div className="flex flex-col h-full">
@@ -178,27 +171,30 @@ export default function LeadsPage() {
       <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 bg-white shrink-0">
         <div>
           <h1 className="text-xl font-semibold text-gray-900">Leads</h1>
-          <p className="text-sm text-gray-500 mt-0.5">{leads.length} total leads</p>
+          <p className="text-sm text-gray-500 mt-0.5">{isLoading ? '…' : `${leadsData?.total ?? 0} total leads`}</p>
         </div>
         <div className="flex items-center gap-2">
+          {/* Pipeline selector */}
+          {pipelines && pipelines.length > 1 && (
+            <select
+              value={activePipeline?.id}
+              onChange={(e) => setActivePipelineId(e.target.value)}
+              className="text-sm border border-gray-200 rounded-lg px-2 py-2 text-gray-700 bg-white"
+            >
+              {pipelines.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+          )}
           <button className="flex items-center gap-1.5 px-3 py-2 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50">
             <Filter className="w-4 h-4" />
             Filter
           </button>
-          {/* View toggle */}
           <div className="flex rounded-lg border border-gray-200 overflow-hidden">
-            <button
-              onClick={() => setView('board')}
-              className={cn('px-3 py-2', view === 'board' ? 'bg-gray-100 text-gray-900' : 'text-gray-500 hover:bg-gray-50')}
-              title="Board view"
-            >
+            <button onClick={() => setView('board')} className={cn('px-3 py-2', view === 'board' ? 'bg-gray-100 text-gray-900' : 'text-gray-500 hover:bg-gray-50')}>
               <LayoutGrid className="w-4 h-4" />
             </button>
-            <button
-              onClick={() => setView('list')}
-              className={cn('px-3 py-2', view === 'list' ? 'bg-gray-100 text-gray-900' : 'text-gray-500 hover:bg-gray-50')}
-              title="List view"
-            >
+            <button onClick={() => setView('list')} className={cn('px-3 py-2', view === 'list' ? 'bg-gray-100 text-gray-900' : 'text-gray-500 hover:bg-gray-50')}>
               <List className="w-4 h-4" />
             </button>
           </div>
@@ -209,16 +205,21 @@ export default function LeadsPage() {
         </div>
       </div>
 
+      {isLoading && (
+        <div className="flex-1 flex items-center justify-center text-sm text-gray-400">Loading…</div>
+      )}
+
       {/* Board view */}
-      {view === 'board' && (
+      {!isLoading && view === 'board' && (
         <div className="flex-1 overflow-x-auto overflow-y-hidden">
           <DndContext sensors={sensors} collisionDetection={closestCorners} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
             <div className="flex gap-4 p-6 h-full">
-              {DUMMY_STAGES.map((stage) => (
+              {stages.map((stage) => (
                 <StageColumn
                   key={stage.id}
                   stage={stage}
                   leads={leads.filter((l) => l.stageId === stage.id)}
+                  onAddLead={() => {}}
                 />
               ))}
             </div>
@@ -230,7 +231,7 @@ export default function LeadsPage() {
       )}
 
       {/* List view */}
-      {view === 'list' && (
+      {!isLoading && view === 'list' && (
         <div className="flex-1 overflow-y-auto p-6">
           <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
             <table className="w-full text-sm">
@@ -245,41 +246,38 @@ export default function LeadsPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {leads.map((lead) => {
-                  const stage = DUMMY_STAGES.find((s) => s.id === lead.stageId)
-                  return (
-                    <tr key={lead.id} className="hover:bg-gray-50">
-                      <td className="px-4 py-3">
-                        <Link href={`/leads/${lead.id}`} className="font-medium text-gray-900 hover:text-blue-600">
-                          {lead.title}
-                        </Link>
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-1.5 text-gray-600">
-                          <Phone className="w-3.5 h-3.5" />
-                          {lead.contactName}
-                        </div>
-                      </td>
-                      <td className="px-4 py-3">
-                        {stage && (
-                          <span className="flex items-center gap-1.5 text-gray-700">
-                            <div className="w-2 h-2 rounded-full" style={{ backgroundColor: stage.color }} />
-                            {stage.name}
+                {leads.map((lead) => (
+                  <tr key={lead.id} className="hover:bg-gray-50">
+                    <td className="px-4 py-3">
+                      <Link href={`/leads/${lead.id}`} className="font-medium text-gray-900 hover:text-blue-600">
+                        {lead.title}
+                      </Link>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-1.5 text-gray-600">
+                        <Phone className="w-3.5 h-3.5" />
+                        {lead.contact.name}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className="flex items-center gap-1.5 text-gray-700">
+                        <div className="w-2 h-2 rounded-full" style={{ backgroundColor: lead.stage.color ?? '#94a3b8' }} />
+                        {lead.stage.name}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-gray-600">{lead.assignedTo?.name ?? '—'}</td>
+                    <td className="px-4 py-3">
+                      <div className="flex gap-1">
+                        {lead.leadTags.map((lt) => (
+                          <span key={lt.tag.id} className={cn('px-1.5 py-0.5 rounded text-xs font-medium', TAG_COLORS[lt.tag.name] ?? 'bg-gray-100 text-gray-600')}>
+                            {lt.tag.name}
                           </span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-gray-600">{lead.assignedTo}</td>
-                      <td className="px-4 py-3">
-                        <div className="flex gap-1">
-                          {lead.tags.map((t) => (
-                            <span key={t} className={cn('px-1.5 py-0.5 rounded text-xs font-medium', TAG_COLORS[t] ?? 'bg-gray-100 text-gray-600')}>{t}</span>
-                          ))}
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 text-gray-500">{formatRelativeTime(lead.createdAt)}</td>
-                    </tr>
-                  )
-                })}
+                        ))}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-gray-500">{formatRelativeTime(new Date(lead.createdAt))}</td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
