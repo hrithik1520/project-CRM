@@ -1,5 +1,5 @@
 // Prisma schema for CRM
-// Database: Supabase PostgreSQL
+// Database: PostgreSQL (self-hosted)
 // Generated: 2026-04-02
 
 generator client {
@@ -7,9 +7,8 @@ generator client {
 }
 
 datasource db {
-  provider  = "postgresql"
-  url       = env("DATABASE_URL")
-  directUrl = env("DIRECT_URL")
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 // ─────────────────────────────────────────────
