@@ -79,8 +79,8 @@ export async function GET(_req: NextRequest) {
       }),
 
       // WhatsApp sessions
-      prisma.whatsappSession.findMany({
-        select: { id: true, status: true, whatsappAccount: { select: { id: true, name: true, phoneNumber: true } } },
+      prisma.whatsAppSession.findMany({
+        select: { id: true, status: true, account: { select: { id: true, name: true, phoneNumber: true } } },
       }),
 
       // Recent activity
