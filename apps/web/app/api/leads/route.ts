@@ -5,6 +5,7 @@ import { hasPermission } from '@/lib/permissions'
 import { ok, created, unauthorized, forbidden, serverError } from '@/lib/api/response'
 import { createAuditLog, createLeadActivity } from '@/lib/api/audit'
 import { parsePagination, paginatedResponse } from '@/lib/api/pagination'
+import { queueGA4Event } from '@/lib/ga4'
 import { z } from 'zod'
 
 const createSchema = z.object({
@@ -107,6 +108,7 @@ export async function POST(req: NextRequest) {
 
     await createLeadActivity(lead.id, user.id, 'lead_created', `Lead created: ${lead.title}`)
     await createAuditLog({ userId: user.id, action: 'create', entityType: 'lead', entityId: lead.id, after: lead })
+    await queueGA4Event('lead_created', { lead_id: lead.id, pipeline_id: lead.pipelineId, source: lead.source ?? '' })
     return created(lead)
   } catch (err) {
     return serverError(err)

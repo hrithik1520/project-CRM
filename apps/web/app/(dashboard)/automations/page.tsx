@@ -2,81 +2,108 @@
 
 import { useState } from 'react'
 import { Plus, Zap, X, ChevronRight, ToggleLeft, ToggleRight } from 'lucide-react'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { api } from '@/lib/api/client'
 import { cn } from '@/lib/utils'
 
-const DUMMY_AUTOMATIONS = [
-  {
-    id: 'auto1',
-    name: 'Send intro message on lead assignment',
-    trigger: 'lead_assigned',
-    action: 'send_whatsapp_message',
-    template: 'First Contact',
-    isActive: true,
-    runs: 24,
-    lastRun: new Date(Date.now() - 3600000),
-  },
-  {
-    id: 'auto2',
-    name: 'Create task if no reply in 24 hours',
-    trigger: 'no_reply_after',
-    triggerConfig: '24 hours',
-    action: 'create_task',
-    actionConfig: 'Follow up — no reply',
-    isActive: true,
-    runs: 8,
-    lastRun: new Date(Date.now() - 86400000),
-  },
-  {
-    id: 'auto3',
-    name: 'Move lead to Stale after 7 days inactivity',
-    trigger: 'lead_stale',
-    triggerConfig: '7 days',
-    action: 'move_to_stage',
-    actionConfig: 'Stale',
-    isActive: false,
-    runs: 2,
-    lastRun: new Date(Date.now() - 5 * 86400000),
-  },
-  {
-    id: 'auto4',
-    name: 'Send payment reminder on pending payment',
-    trigger: 'payment_pending',
-    action: 'send_whatsapp_message',
-    template: 'Payment Reminder',
-    isActive: true,
-    runs: 5,
-    lastRun: new Date(Date.now() - 2 * 86400000),
-  },
-]
+interface Automation {
+  id: string
+  name: string
+  description?: string | null
+  triggerType: string
+  triggerConfig: Record<string, any>
+  conditions: any[]
+  actionType: string
+  actionConfig: Record<string, any>
+  isActive: boolean
+  pipelineId?: string | null
+  createdAt: string
+  updatedAt: string
+  _count?: { runs: number }
+}
 
 const TRIGGER_LABELS: Record<string, string> = {
   lead_created: 'Lead Created',
   lead_assigned: 'Lead Assigned',
   stage_changed: 'Stage Changed',
-  no_reply_after: 'No Reply After',
-  no_followup_after: 'No Follow-up After',
+  no_reply: 'No Reply After',
+  no_followup: 'No Follow-up After',
   payment_pending: 'Payment Pending',
   lead_stale: 'Lead Inactive',
 }
 
 const ACTION_LABELS: Record<string, string> = {
-  send_whatsapp_message: 'Send WhatsApp Message',
+  send_whatsapp: 'Send WhatsApp Message',
   create_task: 'Create Task',
   create_reminder: 'Create Reminder',
-  move_to_stage: 'Move to Stage',
-  assign_to_user: 'Assign to User',
+  move_stage: 'Move to Stage',
+  assign_user: 'Assign to User',
   send_notification: 'Send Internal Notification',
 }
 
-export default function AutomationsPage() {
-  const [automations, setAutomations] = useState(DUMMY_AUTOMATIONS)
-  const [showForm, setShowForm] = useState(false)
+function AutomationSkeleton() {
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 p-4 animate-pulse">
+      <div className="flex items-start gap-3">
+        <div className="w-8 h-8 rounded-lg bg-gray-200" />
+        <div className="flex-1 space-y-2">
+          <div className="h-4 w-56 bg-gray-200 rounded" />
+          <div className="flex gap-2">
+            <div className="h-5 w-24 bg-gray-100 rounded-full" />
+            <div className="h-5 w-24 bg-gray-100 rounded-full" />
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
 
-  function toggleActive(id: string) {
-    setAutomations((prev) =>
-      prev.map((a) => (a.id === id ? { ...a, isActive: !a.isActive } : a))
-    )
+export default function AutomationsPage() {
+  const [showForm, setShowForm] = useState(false)
+  const [formName, setFormName] = useState('')
+  const [formTrigger, setFormTrigger] = useState(Object.keys(TRIGGER_LABELS)[0]!)
+  const [formAction, setFormAction] = useState(Object.keys(ACTION_LABELS)[0]!)
+
+  const qc = useQueryClient()
+
+  const { data: automations, isLoading } = useQuery<Automation[]>({
+    queryKey: ['automations'],
+    queryFn: () => api.get('/api/automations'),
+  })
+
+  const createAutomation = useMutation({
+    mutationFn: (data: object) => api.post<Automation>('/api/automations', data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['automations'] }),
+  })
+
+  const updateAutomation = useMutation({
+    mutationFn: ({ id, data }: { id: string; data: Partial<Automation> }) =>
+      api.put<Automation>(`/api/automations/${id}`, data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['automations'] }),
+  })
+
+  const deleteAutomation = useMutation({
+    mutationFn: (id: string) => api.delete(`/api/automations/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['automations'] }),
+  })
+
+  async function handleCreate() {
+    if (!formName.trim()) return
+    await createAutomation.mutateAsync({
+      name: formName.trim(),
+      triggerType: formTrigger,
+      actionType: formAction,
+      isActive: true,
+    })
+    setShowForm(false)
+    setFormName('')
   }
+
+  function toggleActive(auto: Automation) {
+    updateAutomation.mutate({ id: auto.id, data: { isActive: !auto.isActive } })
+  }
+
+  const activeCount = automations?.filter((a) => a.isActive).length ?? 0
 
   return (
     <div className="flex flex-col h-full">
@@ -85,7 +112,7 @@ export default function AutomationsPage() {
         <div>
           <h1 className="text-xl font-semibold text-gray-900">Automations</h1>
           <p className="text-sm text-gray-500 mt-0.5">
-            {automations.filter((a) => a.isActive).length} active rule{automations.filter((a) => a.isActive).length !== 1 ? 's' : ''}
+            {isLoading ? 'Loading...' : `${activeCount} active rule${activeCount !== 1 ? 's' : ''}`}
           </p>
         </div>
         <button
@@ -104,60 +131,64 @@ export default function AutomationsPage() {
 
       {/* Automation list */}
       <div className="flex-1 overflow-y-auto p-6 pt-4 space-y-3">
-        {automations.map((auto) => (
-          <div
-            key={auto.id}
-            className={cn(
-              'bg-white rounded-xl border p-4 transition-colors',
-              auto.isActive ? 'border-gray-200' : 'border-gray-100 opacity-60'
-            )}
-          >
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex items-start gap-3">
-                <div className={cn(
-                  'w-8 h-8 rounded-lg flex items-center justify-center shrink-0',
-                  auto.isActive ? 'bg-purple-100' : 'bg-gray-100'
-                )}>
-                  <Zap className={cn('w-4 h-4', auto.isActive ? 'text-purple-600' : 'text-gray-400')} />
-                </div>
-                <div>
-                  <p className="text-sm font-semibold text-gray-900">{auto.name}</p>
-                  <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-                    {/* Trigger */}
-                    <span className="flex items-center gap-1 px-2 py-0.5 bg-amber-50 border border-amber-200 rounded-full text-xs text-amber-700">
-                      <span className="font-medium">When:</span> {TRIGGER_LABELS[auto.trigger] ?? auto.trigger}
-                      {'triggerConfig' in auto && auto.triggerConfig && <span>({auto.triggerConfig})</span>}
-                    </span>
-                    <ChevronRight className="w-3 h-3 text-gray-400" />
-                    {/* Action */}
-                    <span className="flex items-center gap-1 px-2 py-0.5 bg-green-50 border border-green-200 rounded-full text-xs text-green-700">
-                      <span className="font-medium">Then:</span> {ACTION_LABELS[auto.action] ?? auto.action}
-                      {'template' in auto && auto.template && <span>({auto.template})</span>}
-                      {'actionConfig' in auto && auto.actionConfig && !('template' in auto) && <span>({auto.actionConfig})</span>}
-                    </span>
+        {isLoading
+          ? Array.from({ length: 3 }).map((_, i) => <AutomationSkeleton key={i} />)
+          : automations?.map((auto) => (
+            <div
+              key={auto.id}
+              className={cn(
+                'bg-white rounded-xl border p-4 transition-colors',
+                auto.isActive ? 'border-gray-200' : 'border-gray-100 opacity-60'
+              )}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-start gap-3">
+                  <div className={cn(
+                    'w-8 h-8 rounded-lg flex items-center justify-center shrink-0',
+                    auto.isActive ? 'bg-purple-100' : 'bg-gray-100'
+                  )}>
+                    <Zap className={cn('w-4 h-4', auto.isActive ? 'text-purple-600' : 'text-gray-400')} />
                   </div>
-                  <p className="text-xs text-gray-400 mt-1.5">
-                    {auto.runs} runs · Last run {new Intl.DateTimeFormat('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }).format(auto.lastRun)}
-                  </p>
+                  <div>
+                    <p className="text-sm font-semibold text-gray-900">{auto.name}</p>
+                    <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                      <span className="flex items-center gap-1 px-2 py-0.5 bg-amber-50 border border-amber-200 rounded-full text-xs text-amber-700">
+                        <span className="font-medium">When:</span> {TRIGGER_LABELS[auto.triggerType] ?? auto.triggerType}
+                      </span>
+                      <ChevronRight className="w-3 h-3 text-gray-400" />
+                      <span className="flex items-center gap-1 px-2 py-0.5 bg-green-50 border border-green-200 rounded-full text-xs text-green-700">
+                        <span className="font-medium">Then:</span> {ACTION_LABELS[auto.actionType] ?? auto.actionType}
+                      </span>
+                    </div>
+                    {auto._count && (
+                      <p className="text-xs text-gray-400 mt-1.5">{auto._count.runs} runs</p>
+                    )}
+                  </div>
                 </div>
-              </div>
-              <div className="flex items-center gap-2 shrink-0">
-                <button
-                  onClick={() => toggleActive(auto.id)}
-                  className="text-gray-400 hover:text-gray-700"
-                  title={auto.isActive ? 'Disable' : 'Enable'}
-                >
-                  {auto.isActive
-                    ? <ToggleRight className="w-6 h-6 text-green-500" />
-                    : <ToggleLeft className="w-6 h-6 text-gray-300" />
-                  }
-                </button>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    onClick={() => toggleActive(auto)}
+                    disabled={updateAutomation.isPending}
+                    className="text-gray-400 hover:text-gray-700 disabled:opacity-50"
+                    title={auto.isActive ? 'Disable' : 'Enable'}
+                  >
+                    {auto.isActive
+                      ? <ToggleRight className="w-6 h-6 text-green-500" />
+                      : <ToggleLeft className="w-6 h-6 text-gray-300" />}
+                  </button>
+                  <button
+                    onClick={() => deleteAutomation.mutate(auto.id)}
+                    className="p-1 text-red-400 hover:text-red-600 rounded"
+                    title="Delete"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
-        ))}
+          ))}
 
-        {automations.length === 0 && (
+        {!isLoading && (!automations || automations.length === 0) && (
           <div className="text-center py-16">
             <Zap className="w-8 h-8 text-gray-300 mx-auto mb-3" />
             <p className="text-sm text-gray-500">No automation rules yet</p>
@@ -183,13 +214,19 @@ export default function AutomationsPage() {
                 <label className="block text-sm font-medium text-gray-700 mb-1.5">Rule Name</label>
                 <input
                   type="text"
+                  value={formName}
+                  onChange={(e) => setFormName(e.target.value)}
                   className="w-full h-10 px-3 rounded-lg border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20"
                   placeholder="e.g. Send intro on assignment"
                 />
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1.5">When (Trigger)</label>
-                <select className="w-full h-10 px-3 rounded-lg border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20">
+                <select
+                  value={formTrigger}
+                  onChange={(e) => setFormTrigger(e.target.value)}
+                  className="w-full h-10 px-3 rounded-lg border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20"
+                >
                   {Object.entries(TRIGGER_LABELS).map(([v, l]) => (
                     <option key={v} value={v}>{l}</option>
                   ))}
@@ -197,7 +234,11 @@ export default function AutomationsPage() {
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1.5">Then (Action)</label>
-                <select className="w-full h-10 px-3 rounded-lg border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20">
+                <select
+                  value={formAction}
+                  onChange={(e) => setFormAction(e.target.value)}
+                  className="w-full h-10 px-3 rounded-lg border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20"
+                >
                   {Object.entries(ACTION_LABELS).map(([v, l]) => (
                     <option key={v} value={v}>{l}</option>
                   ))}
@@ -208,7 +249,11 @@ export default function AutomationsPage() {
               <button onClick={() => setShowForm(false)} className="px-4 py-2 text-sm border border-gray-200 rounded-lg hover:bg-gray-50">
                 Cancel
               </button>
-              <button className="px-4 py-2 text-sm text-white bg-primary rounded-lg hover:bg-primary/90">
+              <button
+                onClick={handleCreate}
+                disabled={!formName.trim() || createAutomation.isPending}
+                className="px-4 py-2 text-sm text-white bg-primary rounded-lg hover:bg-primary/90 disabled:opacity-60"
+              >
                 Create Rule
               </button>
             </div>

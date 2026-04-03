@@ -1,8 +1,9 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   transpilePackages: ['@crm/db', '@crm/types'],
-  serverExternalPackages: ['@prisma/client', 'bcryptjs'],
-  output: 'standalone',
+  experimental: {
+    serverComponentsExternalPackages: ['@prisma/client', 'bcryptjs'],
+  },
 }
 
 export default nextConfig

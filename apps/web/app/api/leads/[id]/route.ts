@@ -4,6 +4,7 @@ import { getSessionUser } from '@/lib/api/auth-guard'
 import { hasPermission } from '@/lib/permissions'
 import { ok, noContent, unauthorized, forbidden, notFound, serverError } from '@/lib/api/response'
 import { createAuditLog, createLeadActivity } from '@/lib/api/audit'
+import { queueGA4Event } from '@/lib/ga4'
 import { z } from 'zod'
 
 const updateSchema = z.object({
@@ -111,8 +112,17 @@ export async function PUT(req: NextRequest, { params }: Params) {
       const assignee = await prisma.user.findUnique({ where: { id: rest.assignedToId }, select: { name: true } })
       await createLeadActivity(id, user.id, 'assigned', `Assigned to ${assignee?.name}`, { assignedToId: rest.assignedToId })
     }
-    if (rest.status === 'won') await createLeadActivity(id, user.id, 'status_changed', 'Lead marked as Won')
-    if (rest.status === 'lost') await createLeadActivity(id, user.id, 'status_changed', `Lead marked as Lost${rest.lostReason ? `: ${rest.lostReason}` : ''}`)
+    if (rest.status === 'won') {
+      await createLeadActivity(id, user.id, 'status_changed', 'Lead marked as Won')
+      await queueGA4Event('lead_won', { lead_id: id, pipeline_id: existing.pipelineId })
+    }
+    if (rest.status === 'lost') {
+      await createLeadActivity(id, user.id, 'status_changed', `Lead marked as Lost${rest.lostReason ? `: ${rest.lostReason}` : ''}`)
+      await queueGA4Event('lead_lost', { lead_id: id, pipeline_id: existing.pipelineId, reason: rest.lostReason ?? '' })
+    }
+    if (stageChanged) {
+      await queueGA4Event('stage_moved', { lead_id: id, from_stage: existing.stageId, to_stage: rest.stageId! })
+    }
 
     await createAuditLog({ userId: user.id, action: 'update', entityType: 'lead', entityId: id, before: existing, after: lead })
     return ok(lead)
